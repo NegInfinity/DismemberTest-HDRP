@@ -2,8 +2,8 @@ using UnityEngine;
 
 using static GizmoTools;
 
-public class ClipSphereGizmo: MonoBehaviour{
-	[SerializeField] int numSegments = 16;
+public class ClipSphere: MonoBehaviour{
+	[SerializeField] int numGizmoSegments = 16;
 	
 	void drawGizmos(){
 		var pos = Vector3.zero;

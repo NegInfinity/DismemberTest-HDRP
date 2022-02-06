@@ -5,12 +5,14 @@ using static GizmoTools;
 public class RagdollPart: MonoBehaviour{
 	public Transform targetBone;
 	public Pose originalPose;
-	public Pose colliderPose;
 	public Vector3 colliderBoxSize;
+	public Vector3 colliderBoxCenter;
 	Ragdoll ragdoll;
+	Rigidbody rigBody;
 
 	void OnEnable(){
 		ragdoll = GetComponentInParent<Ragdoll>();
+		TryGetComponent(out rigBody);
 	}
 
 	void drawGizmosBody(){
@@ -38,5 +40,29 @@ public class RagdollPart: MonoBehaviour{
 
 	void OnDrawGizmosSelected(){
 		drawGizmos(Color.white);
+	}
+
+	public void updateSimulationFlag(){
+		var desiredFlag = !ragdoll.simulate;
+		if (rigBody.isKinematic != desiredFlag)
+			rigBody.isKinematic = desiredFlag;		
+	}
+
+	void LateUpdate(){
+		if (!ragdoll || !rigBody)
+			return;
+		
+		if (ragdoll.simulate){
+			if (rigBody.isKinematic)
+				rigBody.isKinematic = false;
+			targetBone.rotation = transform.rotation;
+			targetBone.position = transform.position;
+		}
+		else{
+			if (!rigBody.isKinematic)
+				rigBody.isKinematic = true;
+			transform.position = targetBone.position;
+			transform.rotation = targetBone.rotation;
+		}
 	}
 }

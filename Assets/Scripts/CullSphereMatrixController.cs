@@ -30,6 +30,10 @@ public class CullSphereMatrixController: MonoBehaviour{
 			rend.GetPropertyBlock(propBlock);
 			if (clipSphere){
 				var mat = clipSphere.transform.worldToLocalMatrix;
+				if (clipSphere.transform.parent){
+					var parentMat = clipSphere.transform.parent.localToWorldMatrix;
+					mat = mat * parentMat;
+				}
 				//Debug.Log($"Clip sphere matrix:\n{mat};");
 				propBlock.SetMatrix(matrixName, mat);
 			}

@@ -386,7 +386,7 @@ public class RagdollBuilder: MonoBehaviour{
 		ragdoll.transform.localScale = Vector3.one;
 		ragdoll.AddComponent<Ragdoll>();
 
-		var filteredBounds = boneBounds.Where(b => (humanBones.Count > 0) || (humanBones.Contains(b.Value.bone)));
+		var filteredBounds = boneBounds.Where(b => (humanBones.Count == 0) || (humanBones.Contains(b.Value.bone)));
 		animToRagdoll.Clear();
 		foreach(var i in filteredBounds){
 			var bone = i.Key;
@@ -424,9 +424,14 @@ public class RagdollBuilder: MonoBehaviour{
 
 			var ragdollPart = obj.AddComponent<RagdollPart>();
 			ragdollPart.targetBone = bone;
+			ragdollPart.colliderBoxSize = size;
+			ragdollPart.colliderBoxCenter = center;
+			ragdollPart.originalPose.position = bone.transform.position;
+			ragdollPart.originalPose.rotation = bone.transform.rotation;
 
 			var rigBody = obj.AddComponent<Rigidbody>();
 			rigBody.mass = mass;
+			rigBody.interpolation = RigidbodyInterpolation.Interpolate;
 
 			animToRagdoll.Add(bone, ragdollPart);
 		}

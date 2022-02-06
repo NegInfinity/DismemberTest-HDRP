@@ -22,6 +22,6 @@ public class RagdollBuilderEditor: Editor{
 	void buildRagdoll(RagdollBuilder rb){
 		if (!rb)
 			return;
-		
+		rb.buildRagdoll();
 	}
 }

@@ -141,7 +141,7 @@ Material:
     - _Anisotropy: 0
     - _BlendMode: 0
     - _BloodClip: 0.9
-    - _BloodScale: 1.5
+    - _BloodScale: 1
     - _CoatMask: 0
     - _ConservativeDepthOffsetEnable: 0
     - _CullMode: 0

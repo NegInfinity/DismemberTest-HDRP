@@ -1,46 +1,14 @@
 using UnityEngine;
 using System.Collections.Generic;
+using System.Linq;
+
+using static GizmoTools;
 
 public class RagdollBuilder: MonoBehaviour{
 	[SerializeField]bool showLimbGizmo = true;
 	[SerializeField]bool showSkin = true;
 	[SerializeField]bool showBoneBounds = true;
-
-	void drawCross(Vector3 pos, float size){
-		var f = size*0.5f;
-		var dx = new Vector3(f, 0.0f, 0.0f);
-		var dy = new Vector3(0.0f, f, 0.0f);
-		var dz = new Vector3(0.0f, 0.0f, f);
-		Gizmos.DrawLine(pos - dx, pos + dx);
-		Gizmos.DrawLine(pos - dy, pos + dy);
-		Gizmos.DrawLine(pos - dz, pos + dz);
-	}
-
-	void drawCross(Vector3 pos, Quaternion rot, float size){
-		var f = size*0.5f;
-		var dx = rot * new Vector3(f, 0.0f, 0.0f);
-		var dy = rot * new Vector3(0.0f, f, 0.0f);
-		var dz = rot * new Vector3(0.0f, 0.0f, f);
-		drawCross(pos, dx, dy, dz);
-	}
-
-	void drawCross(Vector3 pos, Vector3 dx, Vector3 dy, Vector3 dz){
-		Gizmos.DrawLine(pos - dx, pos + dx);
-		Gizmos.DrawLine(pos - dy, pos + dy);
-		Gizmos.DrawLine(pos - dz, pos + dz);
-	}
-
-	void drawCross(Transform t, float size = 0.25f){
-		if (!t)
-			return;
-		drawCross(t.position, t.rotation, size);
-	}
-
-	void drawCrosses(params Transform[] t){
-		foreach(var cur in t){
-			drawCross(cur);
-		}
-	}
+	[SerializeField]float density = 1000.0f;
 
 	void drawLimb(params Transform[] t){
 		for(int i = 0; i < t.Length; i++){
@@ -165,7 +133,7 @@ public class RagdollBuilder: MonoBehaviour{
 	}
 
 	void drawLimbGizmo(){
-		var anim = GetComponent<Animator>();
+		var anim = GetComponentInChildren<Animator>();
 		if (!anim)
 			return;
 
@@ -197,8 +165,13 @@ public class RagdollBuilder: MonoBehaviour{
 		drawLimb(spine, chest, neck, head);
 	}
 
-	void drawBoneBoundsGizmo(SkinnedMeshRenderer[] skelRend){
-		var boneBounds = new Dictionary<Transform, ObbData>();
+	Dictionary<Transform,ObbData> buildBoneBounds(){
+		var skelRend = GetComponentsInChildren<SkinnedMeshRenderer>();
+		return buildBoneBounds(skelRend);
+	}
+
+	Dictionary<Transform,ObbData> buildBoneBounds(SkinnedMeshRenderer[] skelRend){
+		var result = new Dictionary<Transform, ObbData>();
 		foreach(var rend in skelRend){
 			var mesh = rend.sharedMesh;
 			var verts = mesh.vertices;
@@ -206,7 +179,6 @@ public class RagdollBuilder: MonoBehaviour{
 			var bones = rend.bones;
 			var numBones = mesh.bindposes.Length;
 			var matrices = new Matrix4x4[mesh.bindposes.Length];
-			//Debug.Log($"numBones: {numBones}");
 			for(int i = 0; i < numBones; i++){
 				matrices[i] = rend.bones[i].localToWorldMatrix * mesh.bindposes[i];
 			}
@@ -216,13 +188,16 @@ public class RagdollBuilder: MonoBehaviour{
 				var v = verts[i];
 				var w = weights[i];
 				var p = skinTransform(v, w, mesh, rend);
-				//drawCross(p, 0.02f);
-				updateBoneBounds(boneBounds, p, w, bones);
+				updateBoneBounds(result, p, w, bones);
 			}
 		}
+		return result;
+	}
+
+	void drawBoneBoundsGizmo(SkinnedMeshRenderer[] skelRend){
+		var boneBounds = buildBoneBounds();
 
 		foreach(var cur in boneBounds.Values){
-			//Debug.Log($"bone: {cur.bone}; min: {cur.min}; max: {cur.max}");
 			cur.drawGizmo();
 		}
 	}
@@ -281,7 +256,209 @@ public class RagdollBuilder: MonoBehaviour{
 		drawGizmos(Color.white);
 	}	
 
-	void Start(){
+	static readonly Vector3[] axisCandidates = new Vector3[]{
+		Vector3.right, 
+		-Vector3.right,
+		Vector3.up,
+		-Vector3.up,
+		Vector3.forward,
+		-Vector3.forward
+	};
 
+	static float getLocalAxisDot(Transform t, Vector3 local, Vector3 global){
+		var v = t.TransformVector(local);
+		return Vector3.Dot(v, global);
+	}
+
+	static Vector3 findClosestLocalAxis(Transform t, Vector3 globalAxis){
+		var result = axisCandidates
+			.Select(v => (v, getLocalAxisDot(t, v, globalAxis)))
+			.Aggregate((cur, next) => (cur.Item2 > next.Item2) ? cur: next)
+			.v;
+		return result;
+	}
+
+	Dictionary<HumanBodyBones, Transform> humanBoneToTransform = new();
+	Dictionary<Transform, RagdollPart> animToRagdoll = new();
+
+	RagdollPart getHumanRagdollPart(HumanBodyBones boneId){
+		Transform animBone = null;
+		if (!humanBoneToTransform.TryGetValue(boneId, out animBone))
+			return null;
+		RagdollPart result = null;
+		if (!animToRagdoll.TryGetValue(animBone, out result))
+			return null;
+		return result;
+	}
+
+	void linkHumanBones(HumanBodyBones curBoneId, HumanBodyBones parentBoneId, System.Action<Rigidbody, Rigidbody> linkCallback){
+		var curPart = getHumanRagdollPart(curBoneId);
+		var parentPart = getHumanRagdollPart(parentBoneId);
+		if (!curPart || !parentPart)
+			return;
+		var curRigBody = curPart.GetComponent<Rigidbody>();
+		var parentRigBody = parentPart.GetComponent<Rigidbody>();
+		if (!curRigBody || !parentRigBody)
+			return;
+		Debug.Log($"{curRigBody}, {parentRigBody}");
+
+		linkCallback(curRigBody, parentRigBody);
+	}
+
+	void linkHingeBones(HumanBodyBones curBoneId, HumanBodyBones parentBoneId, Vector3 globalAxis, float minLimit, float maxLimit){
+		linkHumanBones(curBoneId, parentBoneId, 
+			(curRigBody, parentRigBody) => {
+				var joint = curRigBody.gameObject.AddComponent<HingeJoint>();
+				joint.connectedBody = parentRigBody;
+				var localAxis = findClosestLocalAxis(curRigBody.transform, globalAxis);
+				joint.axis = localAxis;
+				joint.anchor = Vector3.zero;
+				var limits = joint.limits;
+				limits.min = minLimit;
+				limits.max = maxLimit;
+				joint.useLimits = true;
+				joint.limits = limits;
+			}
+		);
+	}
+
+	void linkBallSocketBones(HumanBodyBones curBoneId, HumanBodyBones parentBoneId, 
+			Vector3 twistAxis, Vector3 swingAxis, System.Action<CharacterJoint> configCallback = null){
+		linkHumanBones(curBoneId, parentBoneId, 
+			(curRigBody, parentRigBody) => {
+				var joint = curRigBody.gameObject.AddComponent<CharacterJoint>();
+				joint.connectedBody = parentRigBody;
+				var localTwist = findClosestLocalAxis(curRigBody.transform, twistAxis);
+				var localSwing = findClosestLocalAxis(curRigBody.transform, swingAxis);
+				joint.axis = localTwist;
+				joint.swingAxis = localSwing;
+				if (configCallback != null)
+					configCallback(joint);
+			}
+		);
+	}
+
+	public void buildRagdoll(){
+		var boneBounds = buildBoneBounds();
+		var ragdoll = new GameObject("ragdoll");
+
+		var humanBodyIds = new HumanBodyBones[]{
+			HumanBodyBones.Hips,
+			HumanBodyBones.Chest,
+			HumanBodyBones.UpperChest,
+			HumanBodyBones.Spine,
+			HumanBodyBones.Neck,
+			HumanBodyBones.Head,
+			HumanBodyBones.LeftUpperArm,
+			HumanBodyBones.LeftLowerArm,
+			HumanBodyBones.LeftHand,
+			HumanBodyBones.RightUpperArm,
+			HumanBodyBones.RightLowerArm,
+			HumanBodyBones.RightHand,
+			HumanBodyBones.LeftUpperLeg,
+			HumanBodyBones.LeftLowerLeg,
+			HumanBodyBones.LeftFoot,
+			HumanBodyBones.RightUpperLeg,
+			HumanBodyBones.RightLowerLeg,
+			HumanBodyBones.RightFoot
+		};
+
+		var skinRend = GetComponentsInChildren<SkinnedMeshRenderer>();
+
+		var anim = GetComponentInChildren<Animator>();
+
+		List<Transform> humanBones = new();
+		humanBoneToTransform.Clear();
+		if (anim){
+			foreach(var curId in humanBodyIds){
+				var animBone = anim.GetBoneTransform(curId);
+				if (!animBone)
+					continue;
+				humanBones.Add(animBone);
+				humanBoneToTransform.Add(curId, animBone);
+			}
+			//humanBones = humanBodyIds.Select(b => anim.GetBoneTransform(b)).Where(b => b != null).ToList();
+		}
+
+		ragdoll.transform.SetParent(transform);
+		ragdoll.transform.localPosition = Vector3.zero;
+		ragdoll.transform.localRotation = Quaternion.identity;
+		ragdoll.transform.localScale = Vector3.one;
+		ragdoll.AddComponent<Ragdoll>();
+
+		var filteredBounds = boneBounds.Where(b => (humanBones.Count > 0) || (humanBones.Contains(b.Value.bone)));
+		animToRagdoll.Clear();
+		foreach(var i in filteredBounds){
+			var bone = i.Key;
+			var curBound = i.Value;
+			var obj = new GameObject(bone.name);
+			obj.transform.SetParent(ragdoll.transform);
+			obj.transform.rotation = bone.rotation;
+			obj.transform.position = bone.position;
+
+			var center = (curBound.min + curBound.max)*0.5f;
+			var size = curBound.max - curBound.min;
+			
+			var scale = new Vector3(
+				curBound.bone.TransformVector(new Vector3(1.0f, 0.0f, 0.0f)).magnitude,
+				curBound.bone.TransformVector(new Vector3(0.0f, 1.0f, 0.0f)).magnitude,
+				curBound.bone.TransformVector(new Vector3(0.0f, 0.0f, 1.0f)).magnitude
+			);
+
+			center.x *= scale.x;
+			center.y *= scale.y;
+			center.z *= scale.z;
+			size.x *= scale.x;
+			size.y *= scale.y;
+			size.z *= scale.z;
+
+			var volume = size.x * size.y * size.z;
+			var mass = volume * density;
+
+			var boxCollider= obj.AddComponent<BoxCollider>();
+
+			boxCollider.center = center;
+			boxCollider.size = size;
+
+			var visualizer = obj.AddComponent<ColliderVisualizer>();
+
+			var ragdollPart = obj.AddComponent<RagdollPart>();
+			ragdollPart.targetBone = bone;
+
+			var rigBody = obj.AddComponent<Rigidbody>();
+			rigBody.mass = mass;
+
+			animToRagdoll.Add(bone, ragdollPart);
+		}
+
+		var elbowLimits = new JointLimits();
+		elbowLimits.min = 0.0f;
+		elbowLimits.max = 90.0f;
+
+		System.Action<CharacterJoint> hipConfig = (joint) => {
+		};
+
+		linkHingeBones(HumanBodyBones.LeftLowerLeg, HumanBodyBones.LeftUpperLeg, -Vector3.right, -90.0f, 0.0f);
+		linkHingeBones(HumanBodyBones.RightLowerLeg, HumanBodyBones.RightUpperLeg, -Vector3.right, -90.0f, 0.0f);
+		linkHingeBones(HumanBodyBones.LeftLowerArm, HumanBodyBones.LeftUpperArm, Vector3.up, 0.0f, 90.0f);
+		linkHingeBones(HumanBodyBones.RightLowerArm, HumanBodyBones.RightUpperArm, -Vector3.up, 0.0f, 90.0f);
+
+		linkBallSocketBones(HumanBodyBones.Head, HumanBodyBones.Neck, Vector3.up, -Vector3.right);
+		linkBallSocketBones(HumanBodyBones.Neck, HumanBodyBones.Chest, Vector3.up, -Vector3.right);
+		linkBallSocketBones(HumanBodyBones.Chest, HumanBodyBones.Spine, Vector3.up, -Vector3.right);
+		linkBallSocketBones(HumanBodyBones.Spine, HumanBodyBones.Hips, Vector3.up, -Vector3.right);
+
+		linkBallSocketBones(HumanBodyBones.LeftHand, HumanBodyBones.LeftLowerArm, -Vector3.right, Vector3.forward);
+		linkBallSocketBones(HumanBodyBones.RightHand, HumanBodyBones.RightLowerArm, Vector3.right, Vector3.forward);
+		linkBallSocketBones(HumanBodyBones.LeftUpperArm, HumanBodyBones.Chest, -Vector3.right, Vector3.forward);
+		linkBallSocketBones(HumanBodyBones.RightUpperArm, HumanBodyBones.Chest, Vector3.right, Vector3.forward);
+
+		linkBallSocketBones(HumanBodyBones.LeftFoot, HumanBodyBones.LeftLowerLeg, -Vector3.up, -Vector3.right);
+		linkBallSocketBones(HumanBodyBones.RightFoot, HumanBodyBones.RightLowerLeg, -Vector3.up,-Vector3.right);
+		linkBallSocketBones(HumanBodyBones.LeftUpperLeg, HumanBodyBones.Hips, -Vector3.up, -Vector3.right);
+		linkBallSocketBones(HumanBodyBones.RightUpperLeg, HumanBodyBones.Hips, -Vector3.up, Vector3.right);
+	}
+
+	void Start(){
 	}
 }
